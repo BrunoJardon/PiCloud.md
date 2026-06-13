@@ -4,19 +4,53 @@
 
 PiCloud serves as a private alternative to Google Drive and Google Photos while maintaining complete ownership of data, low operating costs, and a security-first architecture.
 
+![OMV Dashboard](screenshots/omv-dashboard.png)
+
+---
+
+- [Overview](#overview)
+
+- [Hardware](#hardware)
+
+- [Software Stack](#software-stack)
+
+- [Infrastructure Architecture](#infrastructure-architecture)
+
+- [Storage Architecture](#storage-architecture)
+
+- [Docker Architecture](#docker-architecture)
+
+- [Network Architecture](#network-architecture)
+
+- [Security Model](#security-model)
+  
+  - [Tailscale Access Control](#tailscale-access-control)
+  - [SD Card Protection](#sd-card-protection)
+  - [Monitoring & Alerts](#monitoring--alerts)
+
+- [Design Decisions](#design-decisions)
+
+- [Reliability](#reliability)
+
+- [Known Limitations](#known-limitations)
+
+- [Future Roadmap](#future-roadmap)
+
+- [Philosophy](#philosophy)
+
 ---
 
 # Overview
 
 PiCloud combines:
 
-- Centralized file storage via SMB/Samba
+- Centralized file storage via [SMB/Samba](https://www.ibm.com/docs/en/aix/7.3.0?topic=management-smb-protocol)
 
-- Self-hosted photo management via Immich
+- Self-hosted photo management via [Immich](https://immich.app/)
 
-- Secure remote access via Tailscale
+- Secure remote access via [Tailscale](https://tailscale.com/)
 
-- OpenMediaVault for storage administration
+- [OpenMediaVault](https://www.openmediavault.org/) for storage administration
 
 - Docker-based service deployment
 
@@ -42,19 +76,19 @@ The system is designed to run 24/7 on low-power hardware while remaining simple 
 
 # Software Stack
 
-| Component         | Purpose                    |
-| ----------------- | -------------------------- |
-| Debian 13         | Base operating system      |
-| OpenMediaVault    | Storage administration     |
-| Docker            | Container runtime          |
-| Immich            | Photo and video management |
-| PostgreSQL        | Immich database            |
-| Valkey            | Cache and background jobs  |
-| Samba             | File sharing               |
-| Tailscale         | Remote access              |
-| MergerFS          | Future storage expansion   |
-| Monit             | Service monitoring         |
-| OMV Notifications | Email alerts               |
+| Component                                                                                 | Purpose                    |
+| ----------------------------------------------------------------------------------------- | -------------------------- |
+| Debian 13                                                                                 | Base operating system      |
+| [OpenMediaVault](https://www.openmediavault.org/)                                         | Storage administration     |
+| Docker                                                                                    | Container runtime          |
+| [Immich](https://immich.app/)                                                             | Photo and video management |
+| PostgreSQL                                                                                | Immich database            |
+| [Valkey](https://valkey.io/)                                                              | Cache and background jobs  |
+| [Samba](https://www.ibm.com/docs/en/aix/7.3.0?topic=management-smb-protocol)              | File sharing               |
+| [Tailscale](https://tailscale.com/)                                                       | Remote access              |
+| [MergerFS](https://github.com/trapexit/mergerfs#mergerfs---a-featureful-union-filesystem) | Future storage expansion   |
+| [Monit](https://mmonit.com/monit/)                                                        | Service monitoring         |
+| OMV Notifications                                                                         | Email alerts               |
 
 ---
 
@@ -248,7 +282,7 @@ This reduces the attack surface and prevents accidental exposure of management s
 
 # SD Card Protection
 
-To reduce wear on the system microSD card, OpenMediaVault's write cache is enabled.
+To reduce wear on the system microSD card, [OpenMediaVault's write cache](https://github.com/OpenMediaVault-Plugin-Developers/openmediavault-writecache) is enabled.
 
 Several high-write directories are cached in memory using overlay filesystems:
 
@@ -351,6 +385,17 @@ Current reliability measures include:
 - SD card write protection
 
 - User authentication
+
+## Disk Power Management
+
+The data drive is configured with power-saving settings to reduce unnecessary wear and energy consumption.
+
+Current configuration:
+
+- Advanced Power Management (APM): 127
+- Spindown timeout: 20 minutes
+
+This configuration allows the drive to enter a low-power state during periods of inactivity while avoiding excessively aggressive spin-up/spin-down cycles.
 
 ---
 
