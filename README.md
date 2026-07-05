@@ -1,464 +1,402 @@
 # PiCloud
 
-> Self-hosted personal cloud infrastructure built on a Raspberry Pi 4, designed to provide private file storage and photo management for family and friends.
+> A self-hosted personal cloud built on a Raspberry Pi 4, providing private file storage and photo management for family and friends.
 
-PiCloud serves as a private alternative to Google Drive and Google Photos while maintaining complete ownership of data, low operating costs, and a security-first architecture.
-
-![OMV Dashboard](screenshots/omv-dashboard.png)
+PiCloud is designed as a private alternative to Google Drive and Google Photos while maintaining complete ownership of data, low power consumption, and a modular architecture that is easy to maintain and expand.
 
 ---
 
+# Table of Contents
+
 - [Overview](#overview)
-
 - [Hardware](#hardware)
-
 - [Software Stack](#software-stack)
-
-- [Infrastructure Architecture](#infrastructure-architecture)
-
+- [Infrastructure](#infrastructure)
 - [Storage Architecture](#storage-architecture)
-
-- [Docker Architecture](#docker-architecture)
-
+- [Filesystem Layout](#filesystem-layout)
+- [Immich Deployment](#immich-deployment)
 - [Network Architecture](#network-architecture)
-
 - [Security Model](#security-model)
-  
-  - [Tailscale Access Control](#tailscale-access-control)
-  - [SD Card Protection](#sd-card-protection)
-  - [Monitoring & Alerts](#monitoring--alerts)
-
-- [Design Decisions](#design-decisions)
-
+- [Monitoring](#monitoring)
 - [Reliability](#reliability)
-
+- [Design Decisions](#design-decisions)
 - [Known Limitations](#known-limitations)
-
 - [Future Roadmap](#future-roadmap)
-
 - [Philosophy](#philosophy)
 
 ---
 
 # Overview
 
-PiCloud combines:
+PiCloud provides:
 
-- Centralized file storage via [SMB/Samba](https://www.ibm.com/docs/en/aix/7.3.0?topic=management-smb-protocol)
+- Personal cloud storage through SMB/Samba
+- Self-hosted photo management with Immich
+- Secure remote access using Tailscale
+- Centralized administration with OpenMediaVault
+- Containerized services using Docker
 
-- Self-hosted photo management via [Immich](https://immich.app/)
-
-- Secure remote access via [Tailscale](https://tailscale.com/)
-
-- [OpenMediaVault](https://www.openmediavault.org/) for storage administration
-
-- Docker-based service deployment
-
-- Firewall-enforced network segmentation
-
-The system is designed to run 24/7 on low-power hardware while remaining simple to maintain and expand.
+The system is designed to run continuously with minimal maintenance while remaining simple to understand and expand.
 
 ---
 
 # Hardware
 
-| Component        | Specification                        |
-| ---------------- | ------------------------------------ |
-| Platform         | Raspberry Pi 4 Model B               |
-| CPU              | Broadcom BCM2711 (4 Cores @ 1.8 GHz) |
-| RAM              | 4 GB LPDDR4                          |
-| System Storage   | 64 GB MicroSD                        |
-| Data Storage     | 1 TB External HDD                    |
-| Network          | Gigabit Ethernet                     |
-| Operating System | Debian GNU/Linux 13 (Trixie)         |
+| Component | Specification |
+|-----------|---------------|
+| Platform | Raspberry Pi 4 Model B Rev 1.5 |
+| CPU | Broadcom BCM2711 (4×1.8 GHz) |
+| RAM | 4 GB LPDDR4 |
+| System Storage | 128 GB NVMe SSD |
+| Data Storage | 1 TB External HDD |
+| Network | Gigabit Ethernet |
+| Operating System | Debian GNU/Linux 13 (Trixie) |
 
 ---
 
 # Software Stack
 
-| Component                                                                                 | Purpose                    |
-| ----------------------------------------------------------------------------------------- | -------------------------- |
-| Debian 13                                                                                 | Base operating system      |
-| [OpenMediaVault](https://www.openmediavault.org/)                                         | Storage administration     |
-| Docker                                                                                    | Container runtime          |
-| [Immich](https://immich.app/)                                                             | Photo and video management |
-| PostgreSQL                                                                                | Immich database            |
-| [Valkey](https://valkey.io/)                                                              | Cache and background jobs  |
-| [Samba](https://www.ibm.com/docs/en/aix/7.3.0?topic=management-smb-protocol)              | File sharing               |
-| [Tailscale](https://tailscale.com/)                                                       | Remote access              |
-| [MergerFS](https://github.com/trapexit/mergerfs#mergerfs---a-featureful-union-filesystem) | Future storage expansion   |
-| [Monit](https://mmonit.com/monit/)                                                        | Service monitoring         |
-| OMV Notifications                                                                         | Email alerts               |
+| Component | Purpose |
+|----------|---------|
+| Debian 13 | Base operating system |
+| OpenMediaVault | NAS administration |
+| Docker Engine | Container runtime |
+| Immich | Photo management |
+| PostgreSQL | Immich database |
+| Valkey | Cache & queues |
+| Samba | File sharing |
+| Tailscale | Remote access |
+| MergerFS | Storage abstraction |
+| Monit | Service monitoring |
+| SMART | Disk health monitoring |
 
 ---
 
-# Infrastructure Architecture
+# Infrastructure
 
-```mermaid
-flowchart TD
-
-    Users[Family & Friends]
-
-    Users --> SMB[SMB Shares]
-    Users --> Immich[Immich]
-
-    SMB --> PiCloud
-    Immich --> PiCloud
-
-    PiCloud[Raspberry Pi 4]
-
-    PiCloud --> OMV[OpenMediaVault]
-    PiCloud --> Docker
-
-    Docker --> ImmichServer[Immich Server]
-    Docker --> PostgreSQL
-    Docker --> Valkey
-
-    PostgreSQL --> Storage
-    ImmichServer --> Storage
-
-    OMV --> Storage[(MergerFS Pool)]
+```text
+              Family & Friends
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+        SMB                 Immich
+          │                     │
+          └──────────┬──────────┘
+                     │
+                Raspberry Pi 4
+                     │
+         ┌───────────┴───────────┐
+         │                       │
+ OpenMediaVault             Docker Engine
+         │                       │
+         │                 Immich Stack
+         │
+         ▼
+      Storage
 ```
 
 ---
 
 # Storage Architecture
 
-Current storage consists of a single 1 TB HDD mounted as an ext4 filesystem.
-
-Although only one physical disk is currently installed, storage is already exposed through a MergerFS pool to simplify future expansion.
+PiCloud separates the operating system from user data.
 
 ```text
-/dev/sda1 (ext4)
-        │
-        ▼
-/srv/dev-disk-by-uuid-*
-        │
-        ▼
-MergerFS Pool
-/srv/mergerfs/storage
-        │
- ┌──────┴──────┐
- │             │
- ▼             ▼
-drive/      immich/
+                 NVMe SSD
+                 (128 GB)
+                    │
+        ┌───────────┴────────────┐
+        │                        │
+ Debian + OMV             Docker Engine
+ Docker AppData           Compose Files
+
+
+                 HDD (1 TB)
+                    │
+                  ext4
+                    │
+                 MergerFS
+                    │
+           /srv/mergerfs/storage
+            ┌───────┴────────┐
+            │                │
+          drive/          immich/
 ```
 
-## Shared Storage
+## User Storage
 
-```text
+```
 drive/
-└── User/
-    ├── Backups/
-    ├── Data/
-    └── Media/
+├── user1/
+├── user2/
+├── user3/
+└── ...
 ```
+
+Each user has an independent home directory exported through SMB.
 
 ## Immich Storage
 
-```text
-immich/
-└── data/
-    ├── backups/
-    ├── encoded-video/
-    ├── library/
-    ├── profile/
-    ├── thumbs/
-    └── upload/
 ```
+immich/
+├── backups/
+├── encoded-video/
+├── library/
+├── profile/
+├── thumbs/
+└── upload/
+```
+
+The HDD is configured with:
+
+- Advanced Power Management: **127**
+- Spindown timeout: **20 minutes**
+
+This reduces unnecessary wear while avoiding excessive spin-up/spin-down cycles.
 
 ---
 
-# Docker Architecture
+# Filesystem Layout
 
-Immich runs as an isolated Docker stack.
-
-```mermaid
-flowchart TD
-
-    Immich[Immich Server]
-
-    Immich --> PostgreSQL
-    Immich --> Valkey
-
-    PostgreSQL --> HDD[(Storage)]
-    Immich --> HDD
+```
+/
+├── docker/
+│   ├── appdata/
+│   ├── compose/
+│   └── storage/
+│
+├── srv/
+│   └── mergerfs/
+│       └── storage/
+│
+└── run/
+    └── OverlayFS write cache
 ```
 
-Current containers:
+## Docker
 
-| Container       | Purpose             |
-| --------------- | ------------------- |
-| immich_server   | Web application     |
-| immich_postgres | PostgreSQL database |
-| immich_redis    | Valkey cache        |
+```
+/docker/
+├── appdata/
+│   └── immich/
+│
+├── compose/
+│   └── immich
+│
+└── storage/
+```
+
+| Directory | Purpose |
+|----------|---------|
+| appdata | Persistent application data |
+| compose | Docker Compose projects |
+| storage | Docker Engine data |
+
+---
+
+# Immich Deployment
+
+Immich containers are executed using a dedicated **docker** user.
+
+Current stack:
+
+```
+immich_server
+immich_machine_learning
+immich_postgres
+immich_redis
+```
+
+Characteristics:
+
+- Hardware transcoding via VAAPI
+- PostgreSQL stored on NVMe
+- User assets stored on HDD
+- Machine learning cache stored in Docker volumes
 
 ---
 
 # Network Architecture
 
-PiCloud supports both local and remote access.
-
 ## Local Network
 
-Devices connected to the LAN can access:
+Available services:
 
-- SMB shares
-
+- SMB
 - Immich
+- ICMP
 
-- ICMP (ping)
-
-Administrative services are restricted.
+Administrative services remain restricted.
 
 ## Remote Access
 
-Remote access is provided through Tailscale.
-
-No ports are exposed directly to the Internet.
-
-```mermaid
-flowchart LR
-
-    User[Remote User]
-
-    User --> Tailscale
-
-    Tailscale --> Firewall
-
-    Firewall --> SMB
-    Firewall --> Immich
-
-    Firewall -. blocked .-> SSH
-    Firewall -. blocked .-> OpenMediaVault
 ```
+ Remote User
+      │
+  Tailscale
+      │
+   Firewall
+      │
+ ┌────┴────┐
+ │         │
+SMB     Immich
+```
+
+SSH and OpenMediaVault are intentionally inaccessible through Tailscale.
+
+No service is exposed directly to the public Internet.
 
 ---
 
 # Security Model
 
-The firewall follows a default-deny approach.
+The firewall follows a **default deny** policy.
 
 ## User Access
 
-Available services:
-
-| Service | Port        |
-| ------- | ----------- |
-| SMB     | TCP 139     |
-| SMB     | TCP 445     |
+| Service | Port |
+|---------|------|
+| SMB | TCP 139 |
+| SMB | TCP 445 |
 | NetBIOS | UDP 137-138 |
-| Immich  | TCP 2283    |
+| Immich | TCP 2283 |
 
 ## Administrative Access
 
-Administrative services are only accessible from a dedicated workstation.
+Restricted to a trusted workstation.
 
 | Service | Port |
-| ------- | ---- |
-| SSH     | 22   |
-| HTTP    | 80   |
-| HTTPS   | 443  |
+|---------|------|
+| SSH | 22 |
+| HTTP | 80 |
+| HTTPS | 443 |
 
-All other traffic is denied.
+Security principles:
 
----
-
-# Tailscale Access Control
-
-Remote users are restricted through Tailscale ACLs.
-
-Permitted services:
-
-- SMB
-
-- Immich
-
-Administrative interfaces are intentionally excluded from remote access permissions.
-
-This reduces the attack surface and prevents accidental exposure of management services.
+- Dedicated Docker user
+- Tailscale ACLs
+- Firewall segmentation
+- Service isolation
+- No public port forwarding
 
 ---
 
-# SD Card Protection
+# Monitoring
 
-To reduce wear on the system microSD card, [OpenMediaVault's write cache](https://github.com/OpenMediaVault-Plugin-Developers/openmediavault-writecache) is enabled.
+PiCloud continuously monitors system health using:
 
-Several high-write directories are cached in memory using overlay filesystems:
+- SMART disk monitoring
+- Monit
+- Docker health checks
+- OpenMediaVault email notifications
 
-- /var/log
-
-- /var/tmp
-
-- /var/cache/samba
-
-- /var/lib/rrdcached
-
-- /var/lib/monit
-
-This minimizes unnecessary writes and extends the lifespan of the boot media.
-
----
-
-# Monitoring & Alerts
-
-OpenMediaVault is configured to send email notifications for system events.
-
-Examples include:
-
-- Storage events
-
-- Service failures
+Notifications include:
 
 - SMART warnings
-
-- System notifications
-
-This enables proactive maintenance and faster incident detection.
-
----
-
-# Design Decisions
-
-## Why Raspberry Pi 4?
-
-- Low power consumption
-
-- Silent operation
-
-- Affordable hardware
-
-- Sufficient performance for intended workloads
-
-## Why OpenMediaVault?
-
-- Simple administration
-
-- Debian-based ecosystem
-
-- Excellent NAS tooling
-
-## Why SMB?
-
-- Native Windows support
-
-- Broad compatibility
-
-- Easy integration with existing workflows
-
-## Why Tailscale?
-
-- No port forwarding
-
-- No public IP requirements
-
-- Secure remote access
-
-- Simplified user onboarding
-
-## Why Immich?
-
-- Modern Google Photos replacement
-
-- Active development
-
-- Mobile backup support
-
-- Multi-user capabilities
+- Service failures
+- Storage events
+- System alerts
 
 ---
 
 # Reliability
 
-Current reliability measures include:
+Current reliability measures:
 
-- Firewall segmentation
-
-- Tailscale ACLs
-
-- Docker isolation
-
-- Email alerts
-
+- Operating system isolated on NVMe
+- User data isolated on HDD
+- Docker AppData stored separately
+- OverlayFS write cache for system directories
 - SMART monitoring
+- Email alerts
+- HDD power management
+- Container isolation
 
-- SD card write protection
+---
 
-- User authentication
+# Design Decisions
 
-## Disk Power Management
+## Why Raspberry Pi?
 
-The data drive is configured with power-saving settings to reduce unnecessary wear and energy consumption.
+- Silent
+- Low power consumption
+- Reliable
+- Affordable
 
-Current configuration:
+## Why OpenMediaVault?
 
-- Advanced Power Management (APM): 127
-- Spindown timeout: 20 minutes
+- Debian ecosystem
+- Excellent NAS tooling
+- Easy administration
 
-This configuration allows the drive to enter a low-power state during periods of inactivity while avoiding excessively aggressive spin-up/spin-down cycles.
+## Why Docker?
+
+- Service isolation
+- Easy upgrades
+- Simple recovery
+
+## Why MergerFS?
+
+Storage can grow by simply adding additional disks without changing user paths.
+
+## Why Tailscale?
+
+- No port forwarding
+- Encrypted connections
+- Simple onboarding
+- Reduced attack surface
+
+## Why Immich?
+
+- Multi-user
+- Active development
+- Excellent mobile apps
+- Google Photos replacement
 
 ---
 
 # Known Limitations
 
-Current storage architecture does not provide redundancy.
+Current limitations include:
 
-Failure scenarios:
-
-### SD Card Failure
-
-- Operating system reinstallation required
-
-- Configuration recovery required
-
-### HDD Failure
-
-- Complete data loss
-
-### Accidental Deletion
-
-- No backup recovery currently available
+- Single HDD (no redundancy)
+- No automated backups
+- No UPS
+- Disaster recovery procedures not yet implemented
 
 ---
 
 # Future Roadmap
 
-## Storage
+Storage
 
 - Additional HDDs
+- SnapRAID parity
+- Storage expansion
 
-- SnapRAID parity protection
-
-- Storage redundancy
-
-## Operations
+Operations
 
 - Automated backups
-
-- Backup validation
-
+- Backup verification
 - Disaster recovery documentation
 
-## Monitoring
+Monitoring
 
-- Grafana dashboards
+- Prometheus
+- Grafana
+- Historical metrics
 
-- Prometheus metrics
+Power
 
-- Resource alerting
-
-## Power Protection
-
-- UPS integration
-
-- Graceful shutdown procedures
+- UPS
+- Automatic safe shutdown
 
 ---
 
 # Philosophy
 
-PiCloud is built around a simple idea:
+PiCloud is built around a simple principle:
 
-> Personal cloud services should be private, affordable, maintainable and under the owner's control.
+> Personal cloud infrastructure should be private, understandable, maintainable and fully controlled by its owner.
 
-Rather than relying on subscription-based cloud providers, PiCloud prioritizes data ownership, simplicity and long-term sustainability using open-source software and commodity hardware.
+Rather than maximizing features, the project prioritizes simplicity, reliability, long-term maintainability and complete ownership of personal data.
