@@ -1,8 +1,8 @@
 # PiCloud
 
-> A self-hosted personal cloud built on a Raspberry Pi 4, providing private file storage and photo management for family and friends.
+> A self-hosted personal cloud built on a Raspberry Pi 4, providing private file storage, photo management, and collaborative tools for family and friends.
 
-PiCloud is designed as a private alternative to Google Drive and Google Photos while maintaining complete ownership of data, low power consumption, and a modular architecture that is easy to maintain and expand.
+PiCloud is a private alternative to Google Drive, Google Photos, and Notion, maintaining complete ownership of data, low power consumption, and a modular architecture that is easy to maintain and expand.
 
 ---
 
@@ -14,8 +14,9 @@ PiCloud is designed as a private alternative to Google Drive and Google Photos w
 - [Infrastructure](#infrastructure)
 - [Storage Architecture](#storage-architecture)
 - [Filesystem Layout](#filesystem-layout)
-- [Immich Deployment](#immich-deployment)
+- [Services](#services)
 - [Network Architecture](#network-architecture)
+- [Port Management](#port-management)
 - [Security Model](#security-model)
 - [Monitoring](#monitoring)
 - [Reliability](#reliability)
@@ -32,8 +33,11 @@ PiCloud provides:
 
 - Personal cloud storage through SMB/Samba
 - Self-hosted photo management with Immich
+- Collaborative knowledge base with Outline
+- Task management with Taskview
+- Centralized administration with OpenMediaVault and Portainer
 - Secure remote access using Tailscale
-- Centralized administration with OpenMediaVault
+- Integrated identity management with Tailscale IDP
 - Containerized services using Docker
 
 The system is designed to run continuously with minimal maintenance while remaining simple to understand and expand.
@@ -59,15 +63,18 @@ The system is designed to run continuously with minimal maintenance while remain
 | Component | Purpose |
 |----------|---------|
 | Debian 13 | Base operating system |
-| OpenMediaVault | NAS administration |
+| OpenMediaVault | NAS and system administration |
+| Portainer | Docker service management |
 | Docker Engine | Container runtime |
 | Immich | Photo management |
+| Outline | Collaborative knowledge base |
+| Taskview | Task management |
 | PostgreSQL | Immich database |
 | Valkey | Cache & queues |
 | Samba | File sharing |
-| Tailscale | Remote access |
+| Tailscale | Remote access & identity management |
+| Tailscale IDP | OAuth identity provider |
 | MergerFS | Storage abstraction |
-| Monit | Service monitoring |
 | SMART | Disk health monitoring |
 
 ---
@@ -79,20 +86,32 @@ The system is designed to run continuously with minimal maintenance while remain
                      │
           ┌──────────┴──────────┐
           │                     │
-        SMB                 Immich
+        SMB                 Web Services
           │                     │
-          └──────────┬──────────┘
+          │          ┌──────────┴──────────┐
+          │          │          |          │
+          │      Immich     TaskView    Outline
+          │          │          |          │
+          └──────────┴─────────────────────┘
                      │
                 Raspberry Pi 4
                      │
          ┌───────────┴───────────┐
          │                       │
- OpenMediaVault             Docker Engine
+ OpenMediaVault             Portainer
          │                       │
-         │                 Immich Stack
-         │
-         ▼
-      Storage
+    System Admin           Docker Management
+         │                       │
+         └───────────┬───────────┘
+                     │
+               Docker Engine
+                     │
+               Immich Stack
+              Outline Stack
+              Taskview Stack
+                     │
+                     ▼
+                 Storage
 ```
 
 ---
@@ -108,8 +127,7 @@ PiCloud separates the operating system from user data.
         ┌───────────┴────────────┐
         │                        │
  Debian + OMV             Docker Engine
- Docker AppData           Compose Files
-
+                    Docker Volumes & Data
 
                  HDD (1 TB)
                     │
@@ -117,34 +135,10 @@ PiCloud separates the operating system from user data.
                     │
                  MergerFS
                     │
-           /srv/mergerfs/storage
-            ┌───────┴────────┐
-            │                │
-          drive/          immich/
-```
-
-## User Storage
-
-```
-drive/
-├── user1/
-├── user2/
-├── user3/
-└── ...
-```
-
-Each user has an independent home directory exported through SMB.
-
-## Immich Storage
-
-```
-immich/
-├── backups/
-├── encoded-video/
-├── library/
-├── profile/
-├── thumbs/
-└── upload/
+                 storage
+      ┌───────┬─────┴───┬────────┐
+      │       |         │        |
+    drive/ Outline/ TaskView/ Immich/
 ```
 
 The HDD is configured with:
@@ -156,63 +150,38 @@ This reduces unnecessary wear while avoiding excessive spin-up/spin-down cycles.
 
 ---
 
-# Filesystem Layout
+## Docker Storage
 
-```
-/
-├── docker/
-│   ├── appdata/
-│   ├── compose/
-│   └── storage/
-│
-├── srv/
-│   └── mergerfs/
-│       └── storage/
-│
-└── run/
-    └── OverlayFS write cache
-```
-
-## Docker
-
-```
-/docker/
-├── appdata/
-│   └── immich/
-│
-├── compose/
-│   └── immich
-│
-└── storage/
-```
+Docker maintains its default storage locations:
 
 | Directory | Purpose |
 |----------|---------|
-| appdata | Persistent application data |
-| compose | Docker Compose projects |
-| storage | Docker Engine data |
+| `/var/lib/docker` | Docker Engine data, volumes, and container storage |
+| `/etc/docker` | Docker daemon configuration |
+
+Portainer manages all Docker Compose files and configurations through its appdata volume, providing centralized management of containerized services.
 
 ---
 
-# Immich Deployment
+# Services
 
-Immich containers are executed using a dedicated **docker** user.
+PiCloud hosts the following user-accessible services:
 
-Current stack:
+| Service | Purpose | Access |
+|---------|---------|--------|
+| Immich | Photo management and backup | All users |
+| Outline | Collaborative knowledge base | All users |
+| Taskview | Task and project management | All users |
 
-```
-immich_server
-immich_machine_learning
-immich_postgres
-immich_redis
-```
+## Service Management
 
-Characteristics:
+All Docker services are managed through Portainer, providing:
 
-- Hardware transcoding via VAAPI
-- PostgreSQL stored on NVMe
-- User assets stored on HDD
-- Machine learning cache stored in Docker volumes
+- Container health monitoring
+- Resource usage tracking
+- Log aggregation
+- Service orchestration
+- Easy updates and rollbacks
 
 ---
 
@@ -224,27 +193,73 @@ Available services:
 
 - SMB
 - Immich
+- Outline
+- Taskview
 - ICMP
 
-Administrative services remain restricted.
+Administrative services remain restricted to trusted workstations.
 
-## Remote Access
+## Remote Access with Tailscale
 
 ```
- Remote User
-      │
-  Tailscale
-      │
-   Firewall
-      │
- ┌────┴────┐
- │         │
-SMB     Immich
+      Remote User
+            │
+            │
+   Firewall / Tailscale ACLs
+            │
+       ┌────┴────┐
+       │         │
+      SMB     Web Services
+                 (HTTPS)
 ```
 
-SSH and OpenMediaVault are intentionally inaccessible through Tailscale.
+### Tailscale Features
 
-No service is exposed directly to the public Internet.
+- **Secure Private Network**: All communication encrypted by default
+- **Services** : Use subdomains for different services on the same domain
+- **Tailscale IDP**: Built-in OAuth identity provider for single sign-on
+- **HTTPS Certificates**: Automatic certificate management
+- **No Port Forwarding**: No exposure to public internet
+
+### Service URLs
+
+Services are accessible via Tailscale's `--serve` feature with subdomains:
+
+```
+https://photos.tailnet-name.ts.net
+https://notes.tailnet-name.ts.net
+https://todo.tailnet-name.ts.net
+```
+
+## Administrative Access
+
+Restricted to a trusted workstation.
+
+| Service | Port |
+|---------|------|
+| SSH | 22 |
+| OpenMediaVault | 8000 (HTTP) / 9000 (HTTPS) |
+| Portainer | 8001 (HTTP) / 9001 (HTTPS) |
+
+---
+
+# Port Management
+
+To prevent port conflicts and maintain organization, services are assigned to specific port ranges:
+
+| Type | HTTP Port Range | HTTPS/Secure Range | Services |
+|------|----------------|-------------------|----------|
+| Administration | 8000 - 8099 | 9000 - 9099 | OpenMediaVault, Portainer |
+| Monitoring | 8100 - 8199 | 9100 - 9199 | Grafana, Prometheus, Beszel |
+| Infrastructure | 8200 - 8299 | 9200 - 9299 | Tailscale IDP |
+| App Services | 8300 - 8399 | 9300 - 9399 | APIs, MCPs, Databases |
+| User Applications | 8400 - 8999 | 9400 - 9999 | Immich, Outline, Taskview |
+
+This structured approach ensures:
+- Clear separation of service categories
+- No port conflicts between services
+- Easier firewall rule management
+- Simplified service discovery
 
 ---
 
@@ -260,6 +275,17 @@ The firewall follows a **default deny** policy.
 | SMB | TCP 445 |
 | NetBIOS | UDP 137-138 |
 | Immich | TCP 2283 |
+| Outline | TCP 3000 |
+| Taskview | TCP 8080 |
+
+## Identity Management with Tailscale IDP
+
+PiCloud implements single sign-on using Tailscale IDP:
+
+- **OAuth Integration**: All user-facing services authenticate via Tailscale IDP
+- **Automatic Authentication**: Users logged into Tailscale are automatically authenticated
+- **Centralized User Management**: User identities managed through Tailscale
+- **Seamless Experience**: No additional login required for trusted Tailscale users
 
 ## Administrative Access
 
@@ -268,27 +294,29 @@ Restricted to a trusted workstation.
 | Service | Port |
 |---------|------|
 | SSH | 22 |
-| HTTP | 80 |
-| HTTPS | 443 |
+| OpenMediaVault | 8000 (HTTP) / 9000 (HTTPS) |
+| Portainer | 8001 (HTTP) / 9001 (HTTPS) |
 
 Security principles:
 
-- Dedicated Docker user
 - Tailscale ACLs
 - Firewall segmentation
 - Service isolation
 - No public port forwarding
+- OAuth single sign-on
+- Automatic HTTPS certificates
+- Default deny policy
 
 ---
 
 # Monitoring
 
-PiCloud continuously monitors system health using:
+PiCloud monitors system health through multiple layers:
 
 - SMART disk monitoring
-- Monit
-- Docker health checks
+- Portainer health checks for all containers
 - OpenMediaVault email notifications
+- Docker health checks
 
 Notifications include:
 
@@ -296,6 +324,7 @@ Notifications include:
 - Service failures
 - Storage events
 - System alerts
+- Container health status changes
 
 ---
 
@@ -305,12 +334,13 @@ Current reliability measures:
 
 - Operating system isolated on NVMe
 - User data isolated on HDD
-- Docker AppData stored separately
+- Docker data managed in standard locations
 - OverlayFS write cache for system directories
 - SMART monitoring
 - Email alerts
 - HDD power management
 - Container isolation
+- Service health monitoring via Portainer
 
 ---
 
@@ -329,6 +359,13 @@ Current reliability measures:
 - Excellent NAS tooling
 - Easy administration
 
+## Why Portainer?
+
+- Centralized Docker management
+- Easy service orchestration
+- Resource monitoring
+- Simplified troubleshooting
+
 ## Why Docker?
 
 - Service isolation
@@ -345,6 +382,16 @@ Storage can grow by simply adding additional disks without changing user paths.
 - Encrypted connections
 - Simple onboarding
 - Reduced attack surface
+- Built-in identity management
+- Automatic HTTPS certificates
+
+## Why Tailscale IDP?
+
+- Native integration with Tailscale network
+- No additional infrastructure required
+- Automatic user authentication
+- Single sign-on across all services
+- Simplified user management
 
 ## Why Immich?
 
@@ -352,6 +399,19 @@ Storage can grow by simply adding additional disks without changing user paths.
 - Active development
 - Excellent mobile apps
 - Google Photos replacement
+
+## Why Outline?
+
+- Modern collaborative knowledge base
+- Excellent for team documentation
+- Markdown support
+- Active development
+
+## Why Taskview?
+
+- Lightweight task management
+- Kanban-style organization
+- Simple user interface
 
 ---
 
@@ -363,6 +423,7 @@ Current limitations include:
 - No automated backups
 - No UPS
 - Disaster recovery procedures not yet implemented
+- Limited resource capacity for additional services
 
 ---
 
@@ -382,14 +443,17 @@ Operations
 
 Monitoring
 
-- Prometheus
-- Grafana
+- Beszel
 - Historical metrics
 
 Power
 
 - UPS
 - Automatic safe shutdown
+
+Services
+
+- Additional collaborative tools
 
 ---
 
@@ -399,4 +463,4 @@ PiCloud is built around a simple principle:
 
 > Personal cloud infrastructure should be private, understandable, maintainable and fully controlled by its owner.
 
-Rather than maximizing features, the project prioritizes simplicity, reliability, long-term maintainability and complete ownership of personal data.
+Rather than maximizing features, the project prioritizes simplicity, reliability, long-term maintainability and complete ownership of personal data. With the addition of Tailscale IDP, the system demonstrates how modern zero-trust principles can be applied to personal infrastructure, making secure access seamless while maintaining complete ownership and control.
